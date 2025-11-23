@@ -1,0 +1,38 @@
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.pdb
+
+# Rider / VS Code / Visual Studio
+.vscode/
+.idea/
+*.csproj.user
+
+# Logs
+logs/
+*.log
+
+# Node modules
+node_modules/
+frontend/*/node_modules/
+
+# Build outputs
+dist/
+build/
+*.map
+
+# Environment files
+.env
+*.env.local
+*.env.development
+*.env.production
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Local data
+dbdata/
