@@ -1,41 +1,75 @@
+using Microsoft.EntityFrameworkCore;
+using Kasastok.Infrastructure;
+using Kasastok.Domain;
+using Swashbuckle.AspNetCore.SwaggerGen;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// Swagger (.NET 8 uyumlu)
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// DbContext
+builder.Services.AddDbContext<KasastokContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+
+// CORS
+builder.Services.AddCors(policy =>
+    policy.AddPolicy("all", builder =>
+        builder.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()
+    )
+);
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 app.UseHttpsRedirection();
+app.UseCors("all");
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+// PRODUCT CRUD
+app.MapGet("/api/products", async (KasastokContext db) =>
+    await db.Products.ToListAsync());
 
-app.MapGet("/weatherforecast", () =>
+app.MapPost("/api/products", async (Product product, KasastokContext db) =>
 {
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
+    product.Id = Guid.NewGuid();
+    db.Products.Add(product);
+    await db.SaveChangesAsync();
+    return product;
+});
+
+app.MapPut("/api/products/{id}", async (Guid id, Product input, KasastokContext db) =>
+{
+    var product = await db.Products.FindAsync(id);
+    if (product is null) return Results.NotFound();
+
+    product.Name = input.Name;
+    product.Category = input.Category;
+    product.Barcode = input.Barcode;
+    product.CostPrice = input.CostPrice;
+    product.SalePrice = input.SalePrice;
+    product.Unit = input.Unit;
+    product.Stock = input.Stock;
+    product.HasExpiration = input.HasExpiration;
+    product.ExpirationDate = input.ExpirationDate;
+
+    await db.SaveChangesAsync();
+    return Results.Ok(product);
+});
+
+app.MapDelete("/api/products/{id}", async (Guid id, KasastokContext db) =>
+{
+    var product = await db.Products.FindAsync(id);
+    if (product is null) return Results.NotFound();
+
+    db.Products.Remove(product);
+    await db.SaveChangesAsync();
+    return Results.Ok();
+});
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}

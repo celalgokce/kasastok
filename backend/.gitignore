@@ -1,0 +1,37 @@
+# Build output
+bin/
+obj/
+
+# User files
+*.user
+*.rsuser
+*.suo
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+
+# ASP.NET HTTPS certs
+*.pfx
+
+# EF Core
+Migrations/
+
+# Docker ignored data files
+pgdata/
+docker-data/
+docker-logs/
+
+# Secrets
+appsettings.*.local.json
+appsettings.Local.json
+
+# Rider
+*.iml
