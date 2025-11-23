@@ -72,4 +72,19 @@ app.MapDelete("/api/products/{id}", async (Guid id, KasastokContext db) =>
     return Results.Ok();
 });
 
+app.MapPost("/api/stock-movements", async (StockMovement movement, KasastokContext db) =>
+{
+    var p = await db.Products.FindAsync(movement.ProductId);
+    if (p == null) return Results.NotFound();
+
+    if (movement.Type == MovementType.Sale) p.Stock -= movement.Quantity;
+    else if (movement.Type == MovementType.Purchase) p.Stock += movement.Quantity;
+
+    db.StockMovements.Add(movement);
+    await db.SaveChangesAsync();
+
+    return Results.Ok(movement);
+});
+
+
 app.Run();

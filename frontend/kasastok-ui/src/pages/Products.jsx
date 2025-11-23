@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import MainLayout from "../layout/MainLayout";
+
+const API = "http://localhost:5256/api/products";
 
 export default function Products() {
   const [createMode, setCreateMode] = useState(false);
@@ -16,6 +18,19 @@ export default function Products() {
   const [hasExpiration, setHasExpiration] = useState(false);
   const [expirationDate, setExpirationDate] = useState("");
 
+  // ------------------------------
+  //  API'DEN VERİ ÇEK
+  // ------------------------------
+  useEffect(() => {
+    loadProducts();
+  }, []);
+
+  async function loadProducts() {
+    const res = await fetch(API);
+    const data = await res.json();
+    setProducts(data);
+  }
+
   const resetForm = () => {
     setCreateMode(false);
     setEditId(null);
@@ -30,45 +45,43 @@ export default function Products() {
     setExpirationDate("");
   };
 
-  const handleSave = () => {
+  // ------------------------------
+  //  KAYDET (CREATE + UPDATE)
+  // ------------------------------
+  const handleSave = async () => {
+    const payload = {
+      name,
+      category,
+      barcode,
+      costPrice: parseFloat(costPrice),
+      salePrice: parseFloat(salePrice),
+      stock: parseFloat(stock),
+      unit,
+      hasExpiration,
+      expirationDate: hasExpiration ? expirationDate : null
+    };
+
     if (editId) {
-      setProducts(products.map(p =>
-        p.id === editId
-          ? {
-              ...p,
-              name,
-              category,
-              barcode,
-              costPrice,
-              salePrice,
-              stock,
-              unit,
-              hasExpiration,
-              expirationDate: hasExpiration ? expirationDate : null
-            }
-          : p
-      ));
+      await fetch(`${API}/${editId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
     } else {
-      setProducts([
-        ...products,
-        {
-          id: crypto.randomUUID(),
-          name,
-          category,
-          barcode,
-          costPrice,
-          salePrice,
-          stock,
-          unit,
-          hasExpiration,
-          expirationDate: hasExpiration ? expirationDate : null
-        }
-      ]);
+      await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
     }
 
     resetForm();
+    loadProducts();
   };
 
+  // ------------------------------
+  //  DÜZENLE
+  // ------------------------------
   const handleEdit = (p) => {
     setEditId(p.id);
     setCreateMode(true);
@@ -83,8 +96,12 @@ export default function Products() {
     setExpirationDate(p.expirationDate || "");
   };
 
-  const handleDelete = (id) => {
-    setProducts(products.filter(p => p.id !== id));
+  // ------------------------------
+  //  SİL
+  // ------------------------------
+  const handleDelete = async (id) => {
+    await fetch(`${API}/${id}`, { method: "DELETE" });
+    loadProducts();
   };
 
   return (
@@ -94,11 +111,8 @@ export default function Products() {
           <h3>{editId ? "Ürünü Düzenle" : "Yeni Ürün"}</h3>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
-            
             <input className="input" placeholder="Ürün adı" value={name} onChange={e => setName(e.target.value)} />
-
             <input className="input" placeholder="Kategori" value={category} onChange={e => setCategory(e.target.value)} />
-
             <input className="input" placeholder="Barkod" value={barcode} onChange={e => setBarcode(e.target.value)} />
 
             <select className="select" value={unit} onChange={e => setUnit(e.target.value)}>
@@ -108,9 +122,7 @@ export default function Products() {
             </select>
 
             <input className="input" placeholder="Maliyet fiyatı" value={costPrice} type="number" onChange={e => setCostPrice(e.target.value)} />
-
             <input className="input" placeholder="Satış fiyatı" value={salePrice} type="number" onChange={e => setSalePrice(e.target.value)} />
-
             <input className="input" placeholder="Stok" value={stock} onChange={e => setStock(e.target.value)} type="number" />
 
             <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -131,7 +143,6 @@ export default function Products() {
             </button>
           </div>
         </div>
-
       ) : (
         <>
           <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>

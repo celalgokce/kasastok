@@ -8,4 +8,6 @@ public class KasastokContext : DbContext
     public KasastokContext(DbContextOptions<KasastokContext> options) : base(options) {}
 
     public DbSet<Product> Products { get; set; }
+
+    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
 }
