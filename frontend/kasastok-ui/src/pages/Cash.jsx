@@ -19,6 +19,14 @@ export default function Cash() {
 
   useEffect(() => {
     fetchData();
+
+    // Sayfa focus aldığında otomatik yenile
+    const handleFocus = () => {
+      fetchData();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
   const fetchData = async () => {
@@ -136,90 +144,217 @@ export default function Cash() {
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary">
-          {showForm ? "Formu Kapat" : "+ Yeni İşlem Ekle"}
+        <button
+          onClick={() => setShowForm(true)}
+          style={{
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            color: "white",
+            border: "none",
+            padding: "12px 24px",
+            borderRadius: "8px",
+            fontSize: "14px",
+            fontWeight: 600,
+            cursor: "pointer",
+            boxShadow: "0 4px 6px rgba(102, 126, 234, 0.3)",
+            transition: "transform 0.2s"
+          }}
+          onMouseOver={(e) => e.target.style.transform = "translateY(-2px)"}
+          onMouseOut={(e) => e.target.style.transform = "translateY(0)"}
+        >
+          + Yeni İşlem Ekle
         </button>
       </div>
 
+      {/* Modern Modal */}
       {showForm && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <h3>Yeni İşlem</h3>
-          <form onSubmit={handleSubmit}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-              <div>
-                <label>Tutar (₺)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  value={formData.amount}
-                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                />
+        <>
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0, 0, 0, 0.5)",
+              zIndex: 999,
+              backdropFilter: "blur(4px)"
+            }}
+            onClick={() => setShowForm(false)}
+          />
+          <div style={{
+            position: "fixed",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            background: "white",
+            borderRadius: "16px",
+            padding: "32px",
+            maxWidth: "500px",
+            width: "90%",
+            maxHeight: "90vh",
+            overflow: "auto",
+            zIndex: 1000,
+            boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)"
+          }}>
+            <h2 style={{ margin: "0 0 24px 0", fontSize: "24px", fontWeight: 700 }}>Yeni İşlem</h2>
+            <form onSubmit={handleSubmit}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <div>
+                  <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: 14 }}>Tutar (₺)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "12px",
+                      border: "2px solid #e5e7eb",
+                      borderRadius: "8px",
+                      fontSize: "14px",
+                      transition: "border-color 0.2s"
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = "#667eea"}
+                    onBlur={(e) => e.target.style.borderColor = "#e5e7eb"}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div>
+                    <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: 14 }}>İşlem Türü</label>
+                    <select
+                      value={formData.type}
+                      onChange={(e) => setFormData({ ...formData, type: parseInt(e.target.value) })}
+                      style={{
+                        width: "100%",
+                        padding: "12px",
+                        border: "2px solid #e5e7eb",
+                        borderRadius: "8px",
+                        fontSize: "14px"
+                      }}
+                    >
+                      <option value={1}>💰 Gelir</option>
+                      <option value={2}>💸 Gider</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: 14 }}>Ödeme Tipi</label>
+                    <select
+                      value={formData.paymentType}
+                      onChange={(e) => setFormData({ ...formData, paymentType: parseInt(e.target.value) })}
+                      style={{
+                        width: "100%",
+                        padding: "12px",
+                        border: "2px solid #e5e7eb",
+                        borderRadius: "8px",
+                        fontSize: "14px"
+                      }}
+                    >
+                      <option value={1}>💵 Nakit</option>
+                      <option value={2}>💳 Kredi Kartı</option>
+                      <option value={3}>🏦 Banka Transferi</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: 14 }}>Kategori</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Kira, Maaş, Elektrik, vb."
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "12px",
+                      border: "2px solid #e5e7eb",
+                      borderRadius: "8px",
+                      fontSize: "14px"
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = "#667eea"}
+                    onBlur={(e) => e.target.style.borderColor = "#e5e7eb"}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: 14 }}>Açıklama</label>
+                  <textarea
+                    required
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    rows={3}
+                    style={{
+                      width: "100%",
+                      padding: "12px",
+                      border: "2px solid #e5e7eb",
+                      borderRadius: "8px",
+                      fontSize: "14px",
+                      resize: "vertical"
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = "#667eea"}
+                    onBlur={(e) => e.target.style.borderColor = "#e5e7eb"}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: 14 }}>Referans (Opsiyonel)</label>
+                  <input
+                    type="text"
+                    placeholder="Fatura No, Dekont No, vb."
+                    value={formData.reference}
+                    onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "12px",
+                      border: "2px solid #e5e7eb",
+                      borderRadius: "8px",
+                      fontSize: "14px"
+                    }}
+                  />
+                </div>
               </div>
 
-              <div>
-                <label>İşlem Türü</label>
-                <select
-                  value={formData.type}
-                  onChange={(e) => setFormData({ ...formData, type: parseInt(e.target.value) })}
+              <div style={{ marginTop: 24, display: "flex", gap: 12 }}>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                    color: "white",
+                    border: "none",
+                    padding: "14px",
+                    borderRadius: "8px",
+                    fontSize: "15px",
+                    fontWeight: 600,
+                    cursor: "pointer"
+                  }}
                 >
-                  <option value={1}>Gelir</option>
-                  <option value={2}>Gider</option>
-                </select>
-              </div>
-
-              <div>
-                <label>Kategori</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Satış, Kira, Maaş, vb."
-                  value={formData.category}
-                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label>Ödeme Tipi</label>
-                <select
-                  value={formData.paymentType}
-                  onChange={(e) => setFormData({ ...formData, paymentType: parseInt(e.target.value) })}
+                  Kaydet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  style={{
+                    flex: 1,
+                    background: "#f3f4f6",
+                    color: "#374151",
+                    border: "none",
+                    padding: "14px",
+                    borderRadius: "8px",
+                    fontSize: "15px",
+                    fontWeight: 600,
+                    cursor: "pointer"
+                  }}
                 >
-                  <option value={1}>Nakit</option>
-                  <option value={2}>Kredi Kartı</option>
-                  <option value={3}>Banka Transferi</option>
-                </select>
+                  İptal
+                </button>
               </div>
-
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label>Açıklama</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                />
-              </div>
-
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label>Referans (Opsiyonel)</label>
-                <input
-                  type="text"
-                  placeholder="Satış ID, Fatura No, vb."
-                  value={formData.reference}
-                  onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-              <button type="submit" className="btn-primary">Kaydet</button>
-              <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">
-                İptal
-              </button>
-            </div>
-          </form>
-        </div>
+            </form>
+          </div>
+        </>
       )}
 
       <table className="table">
