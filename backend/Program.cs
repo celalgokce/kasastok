@@ -253,4 +253,292 @@ app.MapGet("/api/stock-movements", async (KasastokContext db) =>
     return Results.Ok(movements);
 });
 
+// ==========================================
+// CASH LEDGER ENDPOINTS
+// ==========================================
+
+// Kasa hareketlerini listele
+app.MapGet("/api/cash-ledgers", async (KasastokContext db) =>
+{
+    var ledgers = await db.CashLedgers
+        .OrderByDescending(c => c.CreatedAt)
+        .Take(100)
+        .ToListAsync();
+
+    return Results.Ok(ledgers);
+});
+
+// Belirli tarih aralığında kasa hareketlerini getir
+app.MapGet("/api/cash-ledgers/filter", async (DateTime? startDate, DateTime? endDate, KasastokContext db) =>
+{
+    var query = db.CashLedgers.AsQueryable();
+
+    if (startDate.HasValue)
+        query = query.Where(c => c.CreatedAt >= startDate.Value);
+
+    if (endDate.HasValue)
+        query = query.Where(c => c.CreatedAt <= endDate.Value);
+
+    var ledgers = await query
+        .OrderByDescending(c => c.CreatedAt)
+        .ToListAsync();
+
+    return Results.Ok(ledgers);
+});
+
+// Kasa hareketi ekle
+app.MapPost("/api/cash-ledgers", async (CashLedger ledger, KasastokContext db) =>
+{
+    ledger.Id = Guid.NewGuid();
+    ledger.CreatedAt = DateTime.UtcNow;
+    db.CashLedgers.Add(ledger);
+    await db.SaveChangesAsync();
+    return Results.Created($"/api/cash-ledgers/{ledger.Id}", ledger);
+});
+
+// Kasa hareketi güncelle
+app.MapPut("/api/cash-ledgers/{id}", async (Guid id, CashLedger input, KasastokContext db) =>
+{
+    var ledger = await db.CashLedgers.FindAsync(id);
+    if (ledger is null) return Results.NotFound();
+
+    ledger.Amount = input.Amount;
+    ledger.Type = input.Type;
+    ledger.Category = input.Category;
+    ledger.PaymentType = input.PaymentType;
+    ledger.Description = input.Description;
+    ledger.Reference = input.Reference;
+
+    await db.SaveChangesAsync();
+    return Results.Ok(ledger);
+});
+
+// Kasa hareketi sil
+app.MapDelete("/api/cash-ledgers/{id}", async (Guid id, KasastokContext db) =>
+{
+    var ledger = await db.CashLedgers.FindAsync(id);
+    if (ledger is null) return Results.NotFound();
+
+    db.CashLedgers.Remove(ledger);
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
+// ==========================================
+// DASHBOARD ANALYTICS ENDPOINTS
+// ==========================================
+
+// Dashboard metrikleri
+app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
+{
+    var today = DateTime.UtcNow.Date;
+    var thisMonth = new DateTime(today.Year, today.Month, 1);
+
+    // Bugünkü satışlar
+    var todaySales = await db.Sales
+        .Where(s => s.CreatedAt >= today)
+        .Include(s => s.Items)
+        .ToListAsync();
+
+    var todaySalesCount = todaySales.Count;
+    var todayRevenue = todaySales.Sum(s => s.Subtotal);
+    var todayProfit = todaySales.SelectMany(s => s.Items).Sum(i => i.Profit);
+
+    // Aylık satışlar
+    var monthSales = await db.Sales
+        .Where(s => s.CreatedAt >= thisMonth)
+        .Include(s => s.Items)
+        .ToListAsync();
+
+    var monthSalesCount = monthSales.Count;
+    var monthRevenue = monthSales.Sum(s => s.Subtotal);
+    var monthProfit = monthSales.SelectMany(s => s.Items).Sum(i => i.Profit);
+
+    // Kasa bakiyesi (gelir - gider)
+    var totalIncome = await db.CashLedgers
+        .Where(c => c.Type == TransactionType.Income)
+        .SumAsync(c => c.Amount);
+
+    var totalExpenses = await db.CashLedgers
+        .Where(c => c.Type == TransactionType.Expense)
+        .SumAsync(c => c.Amount);
+
+    var cashBalance = totalIncome - totalExpenses;
+
+    // Bugünkü giderler
+    var todayExpenses = await db.CashLedgers
+        .Where(c => c.Type == TransactionType.Expense && c.CreatedAt >= today)
+        .SumAsync(c => c.Amount);
+
+    // Aylık giderler
+    var monthExpenses = await db.CashLedgers
+        .Where(c => c.Type == TransactionType.Expense && c.CreatedAt >= thisMonth)
+        .SumAsync(c => c.Amount);
+
+    // Stok metrikleri
+    var lowStockProducts = await db.Products
+        .Where(p => p.Stock < 10)
+        .CountAsync();
+
+    var expiringProducts = await db.Products
+        .Where(p => p.HasExpiration && p.ExpirationDate.HasValue && p.ExpirationDate.Value <= today.AddDays(30))
+        .CountAsync();
+
+    var totalStockValue = await db.Products
+        .SumAsync(p => p.Stock * p.CostPrice);
+
+    return Results.Ok(new
+    {
+        today = new
+        {
+            salesCount = todaySalesCount,
+            revenue = todayRevenue,
+            expenses = todayExpenses,
+            profit = todayProfit
+        },
+        month = new
+        {
+            salesCount = monthSalesCount,
+            revenue = monthRevenue,
+            expenses = monthExpenses,
+            profit = monthProfit
+        },
+        cash = new
+        {
+            balance = cashBalance,
+            totalIncome = totalIncome,
+            totalExpenses = totalExpenses
+        },
+        stock = new
+        {
+            lowStockCount = lowStockProducts,
+            expiringCount = expiringProducts,
+            totalValue = totalStockValue
+        }
+    });
+});
+
+// ==========================================
+// REPORTS ANALYTICS ENDPOINTS
+// ==========================================
+
+// En çok satan ürünler
+app.MapGet("/api/analytics/best-sellers", async (int? days, KasastokContext db) =>
+{
+    var daysToCheck = days ?? 30;
+    var startDate = DateTime.UtcNow.AddDays(-daysToCheck);
+
+    var bestSellers = await db.SaleItems
+        .Where(si => si.Sale.CreatedAt >= startDate)
+        .GroupBy(si => new { si.ProductId, si.ProductName })
+        .Select(g => new
+        {
+            productId = g.Key.ProductId,
+            productName = g.Key.ProductName,
+            totalQuantity = g.Sum(si => si.Quantity),
+            totalRevenue = g.Sum(si => si.Subtotal),
+            totalProfit = g.Sum(si => si.Profit),
+            salesCount = g.Count()
+        })
+        .OrderByDescending(x => x.totalQuantity)
+        .Take(10)
+        .ToListAsync();
+
+    return Results.Ok(bestSellers);
+});
+
+// Kategoriye göre satış dağılımı
+app.MapGet("/api/analytics/category-breakdown", async (int? days, KasastokContext db) =>
+{
+    var daysToCheck = days ?? 30;
+    var startDate = DateTime.UtcNow.AddDays(-daysToCheck);
+
+    var categoryBreakdown = await db.SaleItems
+        .Where(si => si.Sale.CreatedAt >= startDate)
+        .Join(db.Products, si => si.ProductId, p => p.Id, (si, p) => new { SaleItem = si, Product = p })
+        .GroupBy(x => x.Product.Category)
+        .Select(g => new
+        {
+            category = g.Key,
+            totalRevenue = g.Sum(x => x.SaleItem.Subtotal),
+            totalProfit = g.Sum(x => x.SaleItem.Profit),
+            itemsSold = g.Sum(x => x.SaleItem.Quantity),
+            salesCount = g.Count()
+        })
+        .OrderByDescending(x => x.totalRevenue)
+        .ToListAsync();
+
+    return Results.Ok(categoryBreakdown);
+});
+
+// Günlük satış trendi (son 30 gün)
+app.MapGet("/api/analytics/sales-trend", async (int? days, KasastokContext db) =>
+{
+    var daysToCheck = days ?? 30;
+    var startDate = DateTime.UtcNow.Date.AddDays(-daysToCheck);
+
+    var salesTrend = await db.Sales
+        .Where(s => s.CreatedAt >= startDate)
+        .Include(s => s.Items)
+        .GroupBy(s => s.CreatedAt.Date)
+        .Select(g => new
+        {
+            date = g.Key,
+            salesCount = g.Count(),
+            revenue = g.Sum(s => s.Subtotal),
+            profit = g.SelectMany(s => s.Items).Sum(i => i.Profit)
+        })
+        .OrderBy(x => x.date)
+        .ToListAsync();
+
+    return Results.Ok(salesTrend);
+});
+
+// Gelir-Gider trendi
+app.MapGet("/api/analytics/cash-trend", async (int? days, KasastokContext db) =>
+{
+    var daysToCheck = days ?? 30;
+    var startDate = DateTime.UtcNow.Date.AddDays(-daysToCheck);
+
+    var cashTrend = await db.CashLedgers
+        .Where(c => c.CreatedAt >= startDate)
+        .GroupBy(c => c.CreatedAt.Date)
+        .Select(g => new
+        {
+            date = g.Key,
+            income = g.Where(c => c.Type == TransactionType.Income).Sum(c => c.Amount),
+            expense = g.Where(c => c.Type == TransactionType.Expense).Sum(c => c.Amount),
+            balance = g.Where(c => c.Type == TransactionType.Income).Sum(c => c.Amount) -
+                      g.Where(c => c.Type == TransactionType.Expense).Sum(c => c.Amount)
+        })
+        .OrderBy(x => x.date)
+        .ToListAsync();
+
+    return Results.Ok(cashTrend);
+});
+
+// Stok durumu özeti
+app.MapGet("/api/analytics/stock-status", async (KasastokContext db) =>
+{
+    var today = DateTime.UtcNow.Date;
+
+    var stockStatus = new
+    {
+        lowStock = await db.Products.Where(p => p.Stock < 10).ToListAsync(),
+        outOfStock = await db.Products.Where(p => p.Stock == 0).ToListAsync(),
+        expiringSoon = await db.Products
+            .Where(p => p.HasExpiration && p.ExpirationDate.HasValue &&
+                   p.ExpirationDate.Value <= today.AddDays(30) &&
+                   p.ExpirationDate.Value >= today)
+            .OrderBy(p => p.ExpirationDate)
+            .ToListAsync(),
+        expired = await db.Products
+            .Where(p => p.HasExpiration && p.ExpirationDate.HasValue &&
+                   p.ExpirationDate.Value < today)
+            .ToListAsync()
+    };
+
+    return Results.Ok(stockStatus);
+});
+
 app.Run();
