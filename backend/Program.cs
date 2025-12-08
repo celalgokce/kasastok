@@ -435,11 +435,12 @@ app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
 
     // Stok metrikleri
     var lowStockProducts = await db.Products
-        .Where(p => p.Stock < 10)
+        .Where(p => p.Stock < 5)
         .CountAsync();
 
     var expiringProducts = await db.Products
-        .Where(p => p.HasExpiration && p.ExpirationDate.HasValue && p.ExpirationDate.Value <= today.AddDays(30))
+        .Where(p => p.HasExpiration && p.ExpirationDate.HasValue &&
+               p.ExpirationDate.Value <= localNow.AddDays(30))
         .CountAsync();
 
     var totalStockValue = await db.Products
