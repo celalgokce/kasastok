@@ -5,6 +5,9 @@ using Kasastok.DTOs;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Timezone offset for Turkey (UTC+3)
+const int timezoneOffsetHours = 3;
+
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -111,7 +114,7 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
         var sale = new Sale
         {
             Id = Guid.NewGuid(),
-            CreatedAt = DateTime.Now,
+            CreatedAt = DateTime.UtcNow,
             PaymentType = (PaymentType)request.PaymentType,
             Notes = request.Notes
         };
@@ -155,7 +158,7 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
                 Quantity = item.Quantity,
                 UnitPrice = product.SalePrice,
                 Type = MovementType.Sale,
-                CreatedAt = DateTime.Now
+                CreatedAt = DateTime.UtcNow
             };
 
             db.StockMovements.Add(movement);
@@ -168,7 +171,7 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
         var cashLedger = new CashLedger
         {
             Id = Guid.NewGuid(),
-            CreatedAt = DateTime.Now,
+            CreatedAt = DateTime.UtcNow,
             Amount = totalAmount,
             Type = TransactionType.Income,
             Category = "Satış",
@@ -248,7 +251,7 @@ app.MapPost("/api/stock-movements", async (StockMovement movement, KasastokConte
         product.Stock += movement.Quantity;
 
     movement.Id = Guid.NewGuid();
-    movement.CreatedAt = DateTime.Now;
+    movement.CreatedAt = DateTime.UtcNow;
     db.StockMovements.Add(movement);
     await db.SaveChangesAsync();
 
@@ -304,7 +307,7 @@ app.MapGet("/api/cash-ledgers/filter", async (DateTime? startDate, DateTime? end
 app.MapPost("/api/cash-ledgers", async (CashLedger ledger, KasastokContext db) =>
 {
     ledger.Id = Guid.NewGuid();
-    ledger.CreatedAt = DateTime.Now;
+    ledger.CreatedAt = DateTime.UtcNow;
     db.CashLedgers.Add(ledger);
     await db.SaveChangesAsync();
     return Results.Created($"/api/cash-ledgers/{ledger.Id}", ledger);
@@ -345,12 +348,15 @@ app.MapDelete("/api/cash-ledgers/{id}", async (Guid id, KasastokContext db) =>
 // Dashboard metrikleri
 app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
 {
-    var today = DateTime.Now.Date;
-    var thisMonth = new DateTime(today.Year, today.Month, 1);
+    // Calculate "today" in local time, then convert to UTC range
+    var localNow = DateTime.UtcNow.AddHours(timezoneOffsetHours);
+    var today = new DateTime(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, DateTimeKind.Utc).AddHours(-timezoneOffsetHours);
+    var tomorrow = today.AddDays(1);
+    var thisMonth = new DateTime(localNow.Year, localNow.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddHours(-timezoneOffsetHours);
 
     // Bugünkü satışlar
     var todaySales = await db.Sales
-        .Where(s => s.CreatedAt >= today)
+        .Where(s => s.CreatedAt >= today && s.CreatedAt < tomorrow)
         .Include(s => s.Items)
         .ToListAsync();
 
@@ -381,7 +387,7 @@ app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
 
     // Bugünkü giderler
     var todayExpenses = await db.CashLedgers
-        .Where(c => c.Type == TransactionType.Expense && c.CreatedAt >= today)
+        .Where(c => c.Type == TransactionType.Expense && c.CreatedAt >= today && c.CreatedAt < tomorrow)
         .SumAsync(c => c.Amount);
 
     // Aylık giderler
@@ -440,7 +446,7 @@ app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
 app.MapGet("/api/analytics/best-sellers", async (int? days, KasastokContext db) =>
 {
     var daysToCheck = days ?? 30;
-    var startDate = DateTime.Now.AddDays(-daysToCheck);
+    var startDate = DateTime.UtcNow.AddDays(-daysToCheck);
 
     var bestSellers = await db.SaleItems
         .Where(si => si.Sale.CreatedAt >= startDate)
@@ -465,7 +471,7 @@ app.MapGet("/api/analytics/best-sellers", async (int? days, KasastokContext db) 
 app.MapGet("/api/analytics/category-breakdown", async (int? days, KasastokContext db) =>
 {
     var daysToCheck = days ?? 30;
-    var startDate = DateTime.Now.AddDays(-daysToCheck);
+    var startDate = DateTime.UtcNow.AddDays(-daysToCheck);
 
     var categoryBreakdown = await db.SaleItems
         .Where(si => si.Sale.CreatedAt >= startDate)
@@ -489,7 +495,7 @@ app.MapGet("/api/analytics/category-breakdown", async (int? days, KasastokContex
 app.MapGet("/api/analytics/sales-trend", async (int? days, KasastokContext db) =>
 {
     var daysToCheck = days ?? 30;
-    var startDate = DateTime.Now.Date.AddDays(-daysToCheck);
+    var startDate = DateTime.UtcNow.Date.AddDays(-daysToCheck);
 
     var salesTrend = await db.Sales
         .Where(s => s.CreatedAt >= startDate)
@@ -512,7 +518,7 @@ app.MapGet("/api/analytics/sales-trend", async (int? days, KasastokContext db) =
 app.MapGet("/api/analytics/cash-trend", async (int? days, KasastokContext db) =>
 {
     var daysToCheck = days ?? 30;
-    var startDate = DateTime.Now.Date.AddDays(-daysToCheck);
+    var startDate = DateTime.UtcNow.Date.AddDays(-daysToCheck);
 
     var cashTrend = await db.CashLedgers
         .Where(c => c.CreatedAt >= startDate)
@@ -534,7 +540,8 @@ app.MapGet("/api/analytics/cash-trend", async (int? days, KasastokContext db) =>
 // Stok durumu özeti
 app.MapGet("/api/analytics/stock-status", async (KasastokContext db) =>
 {
-    var today = DateTime.Now.Date;
+    var localNow = DateTime.UtcNow.AddHours(timezoneOffsetHours);
+    var today = new DateTime(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, DateTimeKind.Utc).AddHours(-timezoneOffsetHours);
 
     var stockStatus = new
     {
