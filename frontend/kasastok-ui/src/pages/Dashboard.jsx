@@ -1,6 +1,48 @@
+import { useState, useEffect } from "react";
 import MainLayout from "../layout/MainLayout";
 
+const API_BASE = "http://localhost:5256/api";
+
 export default function Dashboard() {
+  const [metrics, setMetrics] = useState(null);
+  const [bestSellers, setBestSellers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    try {
+      const [metricsRes, bestSellersRes] = await Promise.all([
+        fetch(`${API_BASE}/analytics/dashboard`),
+        fetch(`${API_BASE}/analytics/best-sellers?days=30`)
+      ]);
+
+      const metricsData = await metricsRes.json();
+      const bestSellersData = await bestSellersRes.json();
+
+      setMetrics(metricsData);
+      setBestSellers(bestSellersData);
+    } catch (error) {
+      console.error("Dashboard verisi yüklenirken hata:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <MainLayout title="Genel Bakış">
+        <div style={{ padding: 20, textAlign: "center" }}>Yükleniyor...</div>
+      </MainLayout>
+    );
+  }
+
+  const avgBasket = metrics?.today?.salesCount > 0
+    ? (metrics.today.revenue / metrics.today.salesCount).toFixed(2)
+    : 0;
+
   return (
     <MainLayout title="Genel Bakış">
 
@@ -8,22 +50,22 @@ export default function Dashboard() {
       <div className="card-grid">
         <div className="card">
           <div className="card-title">Bugünkü Satış Adedi</div>
-          <div className="card-value">0</div>
+          <div className="card-value">{metrics?.today?.salesCount || 0}</div>
         </div>
 
         <div className="card">
           <div className="card-title">Bugünkü Gelir</div>
-          <div className="card-value">₺0</div>
+          <div className="card-value">₺{metrics?.today?.revenue?.toFixed(2) || 0}</div>
         </div>
 
         <div className="card">
           <div className="card-title">Bugünkü Gider</div>
-          <div className="card-value">₺0</div>
+          <div className="card-value">₺{metrics?.today?.expenses?.toFixed(2) || 0}</div>
         </div>
 
         <div className="card">
           <div className="card-title">Net Kasa Bakiyesi</div>
-          <div className="card-value">₺0</div>
+          <div className="card-value">₺{metrics?.cash?.balance?.toFixed(2) || 0}</div>
         </div>
       </div>
 
@@ -32,29 +74,29 @@ export default function Dashboard() {
       <div className="card-grid" style={{ marginTop: 20 }}>
         <div className="card">
           <div className="card-title">Minimum Stok Altında Ürün</div>
-          <div className="card-value">0</div>
+          <div className="card-value">{metrics?.stock?.lowStockCount || 0}</div>
         </div>
 
         <div className="card">
           <div className="card-title">SKT Yaklaşan Ürün</div>
-          <div className="card-value">0</div>
+          <div className="card-value">{metrics?.stock?.expiringCount || 0}</div>
         </div>
 
         <div className="card">
           <div className="card-title">Toplam Stok Değeri</div>
-          <div className="card-value">₺0</div>
+          <div className="card-value">₺{metrics?.stock?.totalValue?.toFixed(2) || 0}</div>
         </div>
 
         <div className="card">
           <div className="card-title">Ortalama Sepet Tutarı</div>
-          <div className="card-value">₺0</div>
+          <div className="card-value">₺{avgBasket}</div>
         </div>
       </div>
 
 
       {/* EN ÇOK SATANLAR TABLOSU */}
       <div className="card" style={{ marginTop: 30 }}>
-        <div className="card-title">En Çok Satılan Ürünler</div>
+        <div className="card-title">En Çok Satılan Ürünler (Son 30 Gün)</div>
 
         <table className="table" style={{ marginTop: 14 }}>
           <thead>
@@ -62,58 +104,63 @@ export default function Dashboard() {
               <th>Ürün</th>
               <th>Satış Adedi</th>
               <th>Toplam Ciro</th>
+              <th>Kar</th>
             </tr>
           </thead>
 
           <tbody>
-            <tr>
-              <td>Örnek Ürün</td>
-              <td>25</td>
-              <td>₺500</td>
-            </tr>
-
-            <tr>
-              <td>Örnek Ürün 2</td>
-              <td>12</td>
-              <td>₺240</td>
-            </tr>
+            {bestSellers.length === 0 ? (
+              <tr>
+                <td colSpan="4" style={{ textAlign: "center", color: "#9ca3af" }}>
+                  Henüz satış verisi bulunmuyor
+                </td>
+              </tr>
+            ) : (
+              bestSellers.map((item) => (
+                <tr key={item.productId}>
+                  <td>{item.productName}</td>
+                  <td>{item.totalQuantity}</td>
+                  <td>₺{item.totalRevenue.toFixed(2)}</td>
+                  <td>₺{item.totalProfit.toFixed(2)}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
 
-      {/* STOK BİTİŞ TAHMİNİ (Risk Yönetimi) */}
+      {/* AYLIK ÖZET */}
       <div className="card" style={{ marginTop: 30 }}>
-        <div className="card-title">Stok Bitiş Tahmini</div>
+        <div className="card-title">Aylık Özet</div>
 
         <table className="table" style={{ marginTop: 14 }}>
           <thead>
             <tr>
-              <th>Ürün</th>
-              <th>Mevcut Stok</th>
-              <th>Günlük Tüketim</th>
-              <th>Tahmini Bitiş</th>
+              <th>Metrik</th>
+              <th>Değer</th>
             </tr>
           </thead>
 
           <tbody>
             <tr>
-              <td>Örnek Ürün</td>
-              <td>50</td>
-              <td>5 / gün</td>
-              <td>10 gün</td>
+              <td>Toplam Satış Adedi</td>
+              <td>{metrics?.month?.salesCount || 0}</td>
+            </tr>
+            <tr>
+              <td>Toplam Ciro</td>
+              <td>₺{metrics?.month?.revenue?.toFixed(2) || 0}</td>
+            </tr>
+            <tr>
+              <td>Toplam Gider</td>
+              <td>₺{metrics?.month?.expenses?.toFixed(2) || 0}</td>
+            </tr>
+            <tr>
+              <td>Net Kar</td>
+              <td>₺{metrics?.month?.profit?.toFixed(2) || 0}</td>
             </tr>
           </tbody>
         </table>
-      </div>
-
-
-      {/* KATEGORİ BAZLI SATIŞ DAĞILIMI (grafik placeholder) */}
-      <div className="card" style={{ marginTop: 30 }}>
-        <div className="card-title">Kategori Bazlı Satış Dağılımı</div>
-        <div style={{ marginTop: 16, color: "#9ca3af", fontSize: 13 }}>
-          Grafik burada gösterilecek. Chart.js entegrasyonu backend hazır olduğunda yapılacak.
-        </div>
       </div>
 
     </MainLayout>

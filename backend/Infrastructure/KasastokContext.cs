@@ -11,6 +11,7 @@ public class KasastokContext : DbContext
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
     public DbSet<Sale> Sales => Set<Sale>();
     public DbSet<SaleItem> SaleItems => Set<SaleItem>();
+    public DbSet<CashLedger> CashLedgers => Set<CashLedger>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
