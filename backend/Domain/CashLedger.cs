@@ -3,7 +3,7 @@ namespace Kasastok.Domain;
 public class CashLedger
 {
     public Guid Id { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public decimal Amount { get; set; }
     public TransactionType Type { get; set; }
     public string Category { get; set; } = string.Empty;

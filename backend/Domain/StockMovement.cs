@@ -7,7 +7,7 @@ public class StockMovement
     public double Quantity { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal Total => UnitPrice * (decimal)Quantity;
-    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public MovementType Type { get; set; } // Purchase or Sale
 
     public Product? Product { get; set; }
