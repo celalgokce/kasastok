@@ -495,8 +495,8 @@ app.MapGet("/api/analytics/best-sellers", async (int? days, KasastokContext db) 
             productId = g.Key.ProductId,
             productName = g.Key.ProductName,
             totalQuantity = g.Sum(si => si.Quantity),
-            totalRevenue = g.Sum(si => si.Subtotal),
-            totalProfit = g.Sum(si => si.Profit),
+            totalRevenue = g.Sum(si => si.UnitPrice * (decimal)si.Quantity),
+            totalProfit = g.Sum(si => (si.UnitPrice - si.CostPrice) * (decimal)si.Quantity),
             salesCount = g.Count()
         })
         .OrderByDescending(x => x.totalQuantity)
@@ -519,8 +519,8 @@ app.MapGet("/api/analytics/category-breakdown", async (int? days, KasastokContex
         .Select(g => new
         {
             category = g.Key,
-            totalRevenue = g.Sum(x => x.SaleItem.Subtotal),
-            totalProfit = g.Sum(x => x.SaleItem.Profit),
+            totalRevenue = g.Sum(x => x.SaleItem.UnitPrice * (decimal)x.SaleItem.Quantity),
+            totalProfit = g.Sum(x => (x.SaleItem.UnitPrice - x.SaleItem.CostPrice) * (decimal)x.SaleItem.Quantity),
             itemsSold = g.Sum(x => x.SaleItem.Quantity),
             salesCount = g.Count()
         })
@@ -584,7 +584,7 @@ app.MapGet("/api/analytics/stock-status", async (KasastokContext db) =>
 
     var stockStatus = new
     {
-        lowStock = await db.Products.Where(p => p.Stock < 10).ToListAsync(),
+        lowStock = await db.Products.Where(p => p.Stock < 5).ToListAsync(),
         outOfStock = await db.Products.Where(p => p.Stock == 0).ToListAsync(),
         expiringSoon = await db.Products
             .Where(p => p.HasExpiration && p.ExpirationDate.HasValue &&
