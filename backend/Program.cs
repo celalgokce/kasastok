@@ -111,7 +111,7 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
         var sale = new Sale
         {
             Id = Guid.NewGuid(),
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.Now,
             PaymentType = (PaymentType)request.PaymentType,
             Notes = request.Notes
         };
@@ -155,7 +155,7 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
                 Quantity = item.Quantity,
                 UnitPrice = product.SalePrice,
                 Type = MovementType.Sale,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.Now
             };
 
             db.StockMovements.Add(movement);
@@ -168,7 +168,7 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
         var cashLedger = new CashLedger
         {
             Id = Guid.NewGuid(),
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.Now,
             Amount = totalAmount,
             Type = TransactionType.Income,
             Category = "Satış",
@@ -248,7 +248,7 @@ app.MapPost("/api/stock-movements", async (StockMovement movement, KasastokConte
         product.Stock += movement.Quantity;
 
     movement.Id = Guid.NewGuid();
-    movement.CreatedAt = DateTime.UtcNow;
+    movement.CreatedAt = DateTime.Now;
     db.StockMovements.Add(movement);
     await db.SaveChangesAsync();
 
@@ -304,7 +304,7 @@ app.MapGet("/api/cash-ledgers/filter", async (DateTime? startDate, DateTime? end
 app.MapPost("/api/cash-ledgers", async (CashLedger ledger, KasastokContext db) =>
 {
     ledger.Id = Guid.NewGuid();
-    ledger.CreatedAt = DateTime.UtcNow;
+    ledger.CreatedAt = DateTime.Now;
     db.CashLedgers.Add(ledger);
     await db.SaveChangesAsync();
     return Results.Created($"/api/cash-ledgers/{ledger.Id}", ledger);
@@ -345,7 +345,7 @@ app.MapDelete("/api/cash-ledgers/{id}", async (Guid id, KasastokContext db) =>
 // Dashboard metrikleri
 app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
 {
-    var today = DateTime.UtcNow.Date;
+    var today = DateTime.Now.Date;
     var thisMonth = new DateTime(today.Year, today.Month, 1);
 
     // Bugünkü satışlar
@@ -440,7 +440,7 @@ app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
 app.MapGet("/api/analytics/best-sellers", async (int? days, KasastokContext db) =>
 {
     var daysToCheck = days ?? 30;
-    var startDate = DateTime.UtcNow.AddDays(-daysToCheck);
+    var startDate = DateTime.Now.AddDays(-daysToCheck);
 
     var bestSellers = await db.SaleItems
         .Where(si => si.Sale.CreatedAt >= startDate)
@@ -465,7 +465,7 @@ app.MapGet("/api/analytics/best-sellers", async (int? days, KasastokContext db) 
 app.MapGet("/api/analytics/category-breakdown", async (int? days, KasastokContext db) =>
 {
     var daysToCheck = days ?? 30;
-    var startDate = DateTime.UtcNow.AddDays(-daysToCheck);
+    var startDate = DateTime.Now.AddDays(-daysToCheck);
 
     var categoryBreakdown = await db.SaleItems
         .Where(si => si.Sale.CreatedAt >= startDate)
@@ -489,7 +489,7 @@ app.MapGet("/api/analytics/category-breakdown", async (int? days, KasastokContex
 app.MapGet("/api/analytics/sales-trend", async (int? days, KasastokContext db) =>
 {
     var daysToCheck = days ?? 30;
-    var startDate = DateTime.UtcNow.Date.AddDays(-daysToCheck);
+    var startDate = DateTime.Now.Date.AddDays(-daysToCheck);
 
     var salesTrend = await db.Sales
         .Where(s => s.CreatedAt >= startDate)
@@ -512,7 +512,7 @@ app.MapGet("/api/analytics/sales-trend", async (int? days, KasastokContext db) =
 app.MapGet("/api/analytics/cash-trend", async (int? days, KasastokContext db) =>
 {
     var daysToCheck = days ?? 30;
-    var startDate = DateTime.UtcNow.Date.AddDays(-daysToCheck);
+    var startDate = DateTime.Now.Date.AddDays(-daysToCheck);
 
     var cashTrend = await db.CashLedgers
         .Where(c => c.CreatedAt >= startDate)
@@ -534,7 +534,7 @@ app.MapGet("/api/analytics/cash-trend", async (int? days, KasastokContext db) =>
 // Stok durumu özeti
 app.MapGet("/api/analytics/stock-status", async (KasastokContext db) =>
 {
-    var today = DateTime.UtcNow.Date;
+    var today = DateTime.Now.Date;
 
     var stockStatus = new
     {
