@@ -164,6 +164,20 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
         sale.Subtotal = totalAmount;
         db.Sales.Add(sale);
 
+        // Kasa giriş kaydı oluştur (Satış geliri)
+        var cashLedger = new CashLedger
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow,
+            Amount = totalAmount,
+            Type = TransactionType.Income,
+            Category = "Satış",
+            PaymentType = (PaymentType)request.PaymentType,
+            Description = $"Satış - {sale.Items.Count} ürün",
+            Reference = sale.Id.ToString()
+        };
+        db.CashLedgers.Add(cashLedger);
+
         await db.SaveChangesAsync();
         await transaction.CommitAsync();
 
