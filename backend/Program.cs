@@ -61,6 +61,25 @@ app.MapPost("/api/products", async (Product product, KasastokContext db) =>
 {
     product.Id = Guid.NewGuid();
     db.Products.Add(product);
+
+    // Eğer ürün stokla birlikte ekleniyorsa, kasadan gider olarak düş
+    if (product.Stock > 0)
+    {
+        var totalCost = product.CostPrice * (decimal)product.Stock;
+        var cashLedger = new CashLedger
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow,
+            Amount = totalCost,
+            Type = TransactionType.Expense,
+            Category = "Stok Alımı",
+            PaymentType = PaymentType.Cash,
+            Description = $"{product.Name} - {product.Stock} {product.Unit} ilk stok",
+            Reference = product.Id.ToString()
+        };
+        db.CashLedgers.Add(cashLedger);
+    }
+
     await db.SaveChangesAsync();
     return Results.Created($"/api/products/{product.Id}", product);
 });
@@ -253,6 +272,25 @@ app.MapPost("/api/stock-movements", async (StockMovement movement, KasastokConte
     movement.Id = Guid.NewGuid();
     movement.CreatedAt = DateTime.UtcNow;
     db.StockMovements.Add(movement);
+
+    // Eğer alım (Purchase) ise kasadan gider olarak düş
+    if (movement.Type == MovementType.Purchase)
+    {
+        var totalCost = movement.UnitPrice * (decimal)movement.Quantity;
+        var cashLedger = new CashLedger
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow,
+            Amount = totalCost,
+            Type = TransactionType.Expense,
+            Category = "Stok Alımı",
+            PaymentType = PaymentType.Cash, // Varsayılan olarak nakit
+            Description = $"{product.Name} - {movement.Quantity} {product.Unit} alım",
+            Reference = movement.Id.ToString()
+        };
+        db.CashLedgers.Add(cashLedger);
+    }
+
     await db.SaveChangesAsync();
 
     return Results.Created($"/api/stock-movements/{movement.Id}", movement);
