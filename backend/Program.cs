@@ -385,7 +385,7 @@ app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
         .CountAsync();
 
     var totalStockValue = await db.Products
-        .SumAsync(p => p.Stock * p.CostPrice);
+        .SumAsync(p => (decimal)p.Stock * p.CostPrice);
 
     return Results.Ok(new
     {
