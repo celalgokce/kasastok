@@ -10,6 +10,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboardData();
+
+    // Sayfa focus aldığında otomatik yenile
+    const handleFocus = () => {
+      fetchDashboardData();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
   const fetchDashboardData = async () => {
