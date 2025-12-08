@@ -7,6 +7,8 @@ export default function Dashboard() {
   const [metrics, setMetrics] = useState(null);
   const [bestSellers, setBestSellers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
@@ -17,10 +19,21 @@ export default function Dashboard() {
     };
 
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
+
+    // Her 30 saniyede bir otomatik yenile
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 30000); // 30 saniye
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(interval);
+    };
   }, []);
 
   const fetchDashboardData = async () => {
+    if (!loading) setRefreshing(true);
+
     try {
       const [metricsRes, bestSellersRes] = await Promise.all([
         fetch(`${API_BASE}/analytics/dashboard`),
@@ -32,11 +45,17 @@ export default function Dashboard() {
 
       setMetrics(metricsData);
       setBestSellers(bestSellersData);
+      setLastUpdated(new Date());
     } catch (error) {
       console.error("Dashboard verisi yüklenirken hata:", error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const handleManualRefresh = () => {
+    fetchDashboardData();
   };
 
   if (loading) {
@@ -53,6 +72,38 @@ export default function Dashboard() {
 
   return (
     <MainLayout title="Genel Bakış">
+
+      {/* Yenileme Butonu ve Son Güncelleme */}
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 20,
+        padding: "10px 0"
+      }}>
+        <div style={{ fontSize: 14, color: "#9ca3af" }}>
+          {lastUpdated && (
+            <>Son güncelleme: {lastUpdated.toLocaleTimeString('tr-TR')}</>
+          )}
+        </div>
+        <button
+          onClick={handleManualRefresh}
+          disabled={refreshing}
+          style={{
+            padding: "8px 16px",
+            background: refreshing ? "#6b7280" : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            color: "white",
+            border: "none",
+            borderRadius: 8,
+            cursor: refreshing ? "not-allowed" : "pointer",
+            fontSize: 14,
+            fontWeight: 600,
+            transition: "all 0.3s ease"
+          }}
+        >
+          {refreshing ? "🔄 Yenileniyor..." : "🔄 Yenile"}
+        </button>
+      </div>
 
       {/* METRİK SATIRI 1: Satış ve Kasa */}
       <div className="card-grid">
