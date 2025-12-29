@@ -1,7 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using System.Security.Claims;
 using Kasastok.Infrastructure;
 using Kasastok.Domain;
 using Kasastok.DTOs;
+using Kasastok.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,11 +15,59 @@ const int timezoneOffsetHours = 3;
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Example: 'Bearer {token}'",
+        Name = "Authorization",
+        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                {
+                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
 
 // DbContext
 builder.Services.AddDbContext<KasastokContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+
+// Services
+builder.Services.AddSingleton<IJwtService, JwtService>();
+builder.Services.AddSingleton<IPasswordService, PasswordService>();
+
+// JWT Authentication
+var jwtKey = builder.Configuration["Jwt:SecretKey"] ?? "KasastokSuperSecretKey2024ForJWTAuthentication!";
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ValidateIssuer = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "Kasastok",
+            ValidateAudience = true,
+            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "KasastokUsers",
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 // CORS
 builder.Services.AddCors(policy =>
@@ -25,6 +78,33 @@ builder.Services.AddCors(policy =>
 
 var app = builder.Build();
 
+// Ensure database is created and seed admin user
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<KasastokContext>();
+    var passwordService = scope.ServiceProvider.GetRequiredService<IPasswordService>();
+    
+    db.Database.EnsureCreated();
+    
+    // Seed admin user if not exists
+    if (!await db.Users.AnyAsync())
+    {
+        var adminUser = new User
+        {
+            Id = Guid.NewGuid(),
+            Username = "admin",
+            PasswordHash = passwordService.HashPassword("admin123"),
+            FullName = "Sistem Yöneticisi",
+            Role = UserRole.Admin,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+        db.Users.Add(adminUser);
+        await db.SaveChangesAsync();
+        Console.WriteLine("✅ Admin kullanıcı oluşturuldu: admin / admin123");
+    }
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -33,6 +113,247 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("all");
+app.UseAuthentication();
+app.UseAuthorization();
+
+// ==========================================
+// AUTH ENDPOINTS
+// ==========================================
+
+// Login
+app.MapPost("/api/auth/login", async (LoginRequest request, KasastokContext db, IJwtService jwtService, IPasswordService passwordService) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        return Results.BadRequest(new { message = "Kullanıcı adı ve şifre gereklidir" });
+
+    var user = await db.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
+    
+    if (user == null || !passwordService.VerifyPassword(request.Password, user.PasswordHash))
+        return Results.Unauthorized();
+
+    if (!user.IsActive)
+        return Results.BadRequest(new { message = "Hesabınız devre dışı bırakılmış" });
+
+    // Update last login
+    user.LastLoginAt = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+
+    var token = jwtService.GenerateToken(user);
+    var expiresAt = DateTime.UtcNow.AddHours(24);
+
+    return Results.Ok(new LoginResponse
+    {
+        Token = token,
+        ExpiresAt = expiresAt,
+        User = new UserDto
+        {
+            Id = user.Id,
+            Username = user.Username,
+            FullName = user.FullName,
+            Role = user.Role.ToString(),
+            IsActive = user.IsActive,
+            CreatedAt = user.CreatedAt,
+            LastLoginAt = user.LastLoginAt
+        }
+    });
+});
+
+// Get current user
+app.MapGet("/api/auth/me", async (HttpContext httpContext, KasastokContext db) =>
+{
+    var userIdClaim = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                   ?? httpContext.User.FindFirst("sub")?.Value;
+    
+    if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+        return Results.Unauthorized();
+
+    var user = await db.Users.FindAsync(userId);
+    if (user == null)
+        return Results.NotFound();
+
+    return Results.Ok(new UserDto
+    {
+        Id = user.Id,
+        Username = user.Username,
+        FullName = user.FullName,
+        Role = user.Role.ToString(),
+        IsActive = user.IsActive,
+        CreatedAt = user.CreatedAt,
+        LastLoginAt = user.LastLoginAt
+    });
+}).RequireAuthorization();
+
+// Change password
+app.MapPost("/api/auth/change-password", async (ChangePasswordRequest request, HttpContext httpContext, KasastokContext db, IPasswordService passwordService) =>
+{
+    var userIdClaim = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                   ?? httpContext.User.FindFirst("sub")?.Value;
+    
+    if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+        return Results.Unauthorized();
+
+    var user = await db.Users.FindAsync(userId);
+    if (user == null)
+        return Results.NotFound();
+
+    if (!passwordService.VerifyPassword(request.CurrentPassword, user.PasswordHash))
+        return Results.BadRequest(new { message = "Mevcut şifre yanlış" });
+
+    user.PasswordHash = passwordService.HashPassword(request.NewPassword);
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new { message = "Şifre başarıyla değiştirildi" });
+}).RequireAuthorization();
+
+// ==========================================
+// USER MANAGEMENT ENDPOINTS (Admin only)
+// ==========================================
+
+// Get all users
+app.MapGet("/api/users", async (HttpContext httpContext, KasastokContext db) =>
+{
+    var roleClaim = httpContext.User.FindFirst(ClaimTypes.Role)?.Value;
+    if (roleClaim != "Admin")
+        return Results.Forbid();
+
+    var users = await db.Users
+        .OrderBy(u => u.Username)
+        .Select(u => new UserDto
+        {
+            Id = u.Id,
+            Username = u.Username,
+            FullName = u.FullName,
+            Role = u.Role.ToString(),
+            IsActive = u.IsActive,
+            CreatedAt = u.CreatedAt,
+            LastLoginAt = u.LastLoginAt
+        })
+        .ToListAsync();
+
+    return Results.Ok(users);
+}).RequireAuthorization();
+
+// Get user by id
+app.MapGet("/api/users/{id}", async (Guid id, HttpContext httpContext, KasastokContext db) =>
+{
+    var roleClaim = httpContext.User.FindFirst(ClaimTypes.Role)?.Value;
+    if (roleClaim != "Admin")
+        return Results.Forbid();
+
+    var user = await db.Users.FindAsync(id);
+    if (user == null)
+        return Results.NotFound();
+
+    return Results.Ok(new UserDto
+    {
+        Id = user.Id,
+        Username = user.Username,
+        FullName = user.FullName,
+        Role = user.Role.ToString(),
+        IsActive = user.IsActive,
+        CreatedAt = user.CreatedAt,
+        LastLoginAt = user.LastLoginAt
+    });
+}).RequireAuthorization();
+
+// Create user
+app.MapPost("/api/users", async (RegisterRequest request, HttpContext httpContext, KasastokContext db, IPasswordService passwordService) =>
+{
+    var roleClaim = httpContext.User.FindFirst(ClaimTypes.Role)?.Value;
+    if (roleClaim != "Admin")
+        return Results.Forbid();
+
+    if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        return Results.BadRequest(new { message = "Kullanıcı adı ve şifre gereklidir" });
+
+    if (await db.Users.AnyAsync(u => u.Username == request.Username))
+        return Results.BadRequest(new { message = "Bu kullanıcı adı zaten kullanılıyor" });
+
+    var user = new User
+    {
+        Id = Guid.NewGuid(),
+        Username = request.Username,
+        PasswordHash = passwordService.HashPassword(request.Password),
+        FullName = request.FullName,
+        Role = (UserRole)request.Role,
+        IsActive = true,
+        CreatedAt = DateTime.UtcNow
+    };
+
+    db.Users.Add(user);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/api/users/{user.Id}", new UserDto
+    {
+        Id = user.Id,
+        Username = user.Username,
+        FullName = user.FullName,
+        Role = user.Role.ToString(),
+        IsActive = user.IsActive,
+        CreatedAt = user.CreatedAt,
+        LastLoginAt = user.LastLoginAt
+    });
+}).RequireAuthorization();
+
+// Update user
+app.MapPut("/api/users/{id}", async (Guid id, UpdateUserRequest request, HttpContext httpContext, KasastokContext db, IPasswordService passwordService) =>
+{
+    var roleClaim = httpContext.User.FindFirst(ClaimTypes.Role)?.Value;
+    if (roleClaim != "Admin")
+        return Results.Forbid();
+
+    var user = await db.Users.FindAsync(id);
+    if (user == null)
+        return Results.NotFound();
+
+    if (!string.IsNullOrWhiteSpace(request.FullName))
+        user.FullName = request.FullName;
+
+    if (!string.IsNullOrWhiteSpace(request.Password))
+        user.PasswordHash = passwordService.HashPassword(request.Password);
+
+    if (request.Role.HasValue)
+        user.Role = (UserRole)request.Role.Value;
+
+    if (request.IsActive.HasValue)
+        user.IsActive = request.IsActive.Value;
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new UserDto
+    {
+        Id = user.Id,
+        Username = user.Username,
+        FullName = user.FullName,
+        Role = user.Role.ToString(),
+        IsActive = user.IsActive,
+        CreatedAt = user.CreatedAt,
+        LastLoginAt = user.LastLoginAt
+    });
+}).RequireAuthorization();
+
+// Delete user
+app.MapDelete("/api/users/{id}", async (Guid id, HttpContext httpContext, KasastokContext db) =>
+{
+    var roleClaim = httpContext.User.FindFirst(ClaimTypes.Role)?.Value;
+    if (roleClaim != "Admin")
+        return Results.Forbid();
+
+    var userIdClaim = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                   ?? httpContext.User.FindFirst("sub")?.Value;
+    
+    if (userIdClaim == id.ToString())
+        return Results.BadRequest(new { message = "Kendinizi silemezsiniz" });
+
+    var user = await db.Users.FindAsync(id);
+    if (user == null)
+        return Results.NotFound();
+
+    db.Users.Remove(user);
+    await db.SaveChangesAsync();
+
+    return Results.NoContent();
+}).RequireAuthorization();
 
 // ==========================================
 // PRODUCT ENDPOINTS
@@ -116,7 +437,7 @@ app.MapDelete("/api/products/{id}", async (Guid id, KasastokContext db) =>
 });
 
 // ==========================================
-// SALE ENDPOINTS (POS)
+// SALES / POS ENDPOINTS
 // ==========================================
 
 // Satış tamamla (POS)
@@ -125,9 +446,8 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
     if (request.Items == null || request.Items.Count == 0)
         return Results.BadRequest(new { message = "Sepet boş olamaz" });
 
-    // Transaction başlat
     using var transaction = await db.Database.BeginTransactionAsync();
-    
+
     try
     {
         var sale = new Sale
@@ -135,26 +455,24 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
             Id = Guid.NewGuid(),
             CreatedAt = DateTime.UtcNow,
             PaymentType = (PaymentType)request.PaymentType,
-            Notes = request.Notes
+            Notes = request.Notes,
+            Items = new List<SaleItem>()
         };
 
         decimal totalAmount = 0;
 
-        // Her ürün için işlem yap
         foreach (var item in request.Items)
         {
             var product = await db.Products.FindAsync(item.ProductId);
             if (product == null)
                 return Results.BadRequest(new { message = $"Ürün bulunamadı: {item.ProductId}" });
 
-            // Stok kontrolü
             if (product.Stock < item.Quantity)
-                return Results.BadRequest(new { message = $"{product.Name} için yetersiz stok" });
+                return Results.BadRequest(new { message = $"Yetersiz stok: {product.Name}" });
 
             // Stok düş
             product.Stock -= item.Quantity;
 
-            // SaleItem oluştur
             var saleItem = new SaleItem
             {
                 Id = Guid.NewGuid(),
@@ -169,7 +487,7 @@ app.MapPost("/api/sales/complete", async (CompleteSaleRequest request, KasastokC
             sale.Items.Add(saleItem);
             totalAmount += saleItem.Subtotal;
 
-            // StockMovement oluştur
+            // Stok hareketi kaydet
             var movement = new StockMovement
             {
                 Id = Guid.NewGuid(),
@@ -235,7 +553,7 @@ app.MapGet("/api/sales", async (KasastokContext db) =>
     var sales = await db.Sales
         .Include(s => s.Items)
         .OrderByDescending(s => s.CreatedAt)
-        .Take(50) // Son 50 satış
+        .Take(50)
         .ToListAsync();
 
     return Results.Ok(sales);
@@ -284,7 +602,7 @@ app.MapPost("/api/stock-movements", async (StockMovement movement, KasastokConte
             Amount = totalCost,
             Type = TransactionType.Expense,
             Category = "Stok Alımı",
-            PaymentType = PaymentType.Cash, // Varsayılan olarak nakit
+            PaymentType = PaymentType.Cash,
             Description = $"{product.Name} - {movement.Quantity} {product.Unit} alım",
             Reference = movement.Id.ToString()
         };
@@ -428,23 +746,10 @@ app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
         .Where(c => c.Type == TransactionType.Expense && c.CreatedAt >= today && c.CreatedAt < tomorrow)
         .SumAsync(c => c.Amount);
 
-    // Aylık giderler
-    var monthExpenses = await db.CashLedgers
-        .Where(c => c.Type == TransactionType.Expense && c.CreatedAt >= thisMonth)
-        .SumAsync(c => c.Amount);
-
-    // Stok metrikleri
-    var lowStockProducts = await db.Products
-        .Where(p => p.Stock < 5)
-        .CountAsync();
-
-    var expiringProducts = await db.Products
-        .Where(p => p.HasExpiration && p.ExpirationDate.HasValue &&
-               p.ExpirationDate.Value <= localNow.AddDays(30))
-        .CountAsync();
-
-    var totalStockValue = await db.Products
-        .SumAsync(p => (decimal)p.Stock * p.CostPrice);
+    // Stok durumu
+    var lowStockCount = await db.Products.CountAsync(p => p.Stock <= 5);
+    var expiringCount = await db.Products.CountAsync(p => p.HasExpiration && p.ExpirationDate <= DateTime.UtcNow.AddDays(30));
+    var totalStockValue = await db.Products.SumAsync(p => p.CostPrice * (decimal)p.Stock);
 
     return Results.Ok(new
     {
@@ -452,43 +757,49 @@ app.MapGet("/api/analytics/dashboard", async (KasastokContext db) =>
         {
             salesCount = todaySalesCount,
             revenue = todayRevenue,
-            expenses = todayExpenses,
-            profit = todayProfit
+            profit = todayProfit,
+            expenses = todayExpenses
         },
         month = new
         {
             salesCount = monthSalesCount,
             revenue = monthRevenue,
-            expenses = monthExpenses,
-            profit = monthProfit
+            profit = monthProfit,
+            expenses = totalExpenses
         },
         cash = new
         {
             balance = cashBalance,
-            totalIncome = totalIncome,
-            totalExpenses = totalExpenses
+            totalIncome,
+            totalExpenses
         },
         stock = new
         {
-            lowStockCount = lowStockProducts,
-            expiringCount = expiringProducts,
+            lowStockCount,
+            expiringCount,
             totalValue = totalStockValue
         }
     });
 });
 
-// ==========================================
-// REPORTS ANALYTICS ENDPOINTS
-// ==========================================
-
-// En çok satan ürünler
-app.MapGet("/api/analytics/best-sellers", async (int? days, KasastokContext db) =>
+// En çok satılan ürünler
+app.MapGet("/api/analytics/best-sellers", async (int days, KasastokContext db) =>
 {
-    var daysToCheck = days ?? 30;
-    var startDate = DateTime.UtcNow.AddDays(-daysToCheck);
+    var startDate = DateTime.UtcNow.AddDays(-days);
 
-    var bestSellers = await db.SaleItems
-        .Where(si => si.Sale.CreatedAt >= startDate)
+    // Önce verileri çek, sonra bellekte hesapla
+    var saleItems = await db.SaleItems
+        .Where(si => si.Sale!.CreatedAt >= startDate)
+        .Select(si => new {
+            si.ProductId,
+            si.ProductName,
+            si.Quantity,
+            si.UnitPrice,
+            si.CostPrice
+        })
+        .ToListAsync();
+
+    var bestSellers = saleItems
         .GroupBy(si => new { si.ProductId, si.ProductName })
         .Select(g => new
         {
@@ -496,109 +807,142 @@ app.MapGet("/api/analytics/best-sellers", async (int? days, KasastokContext db) 
             productName = g.Key.ProductName,
             totalQuantity = g.Sum(si => si.Quantity),
             totalRevenue = g.Sum(si => si.UnitPrice * (decimal)si.Quantity),
-            totalProfit = g.Sum(si => (si.UnitPrice - si.CostPrice) * (decimal)si.Quantity),
-            salesCount = g.Count()
+            totalProfit = g.Sum(si => (si.UnitPrice - si.CostPrice) * (decimal)si.Quantity)
         })
         .OrderByDescending(x => x.totalQuantity)
         .Take(10)
-        .ToListAsync();
+        .ToList();
 
     return Results.Ok(bestSellers);
 });
 
-// Kategoriye göre satış dağılımı
-app.MapGet("/api/analytics/category-breakdown", async (int? days, KasastokContext db) =>
+// Satış trendi
+app.MapGet("/api/analytics/sales-trend", async (int days, KasastokContext db) =>
 {
-    var daysToCheck = days ?? 30;
-    var startDate = DateTime.UtcNow.AddDays(-daysToCheck);
+    var startDate = DateTime.UtcNow.AddDays(-days);
+    const int timezoneOffsetHours = 3;
 
-    var categoryBreakdown = await db.SaleItems
-        .Where(si => si.Sale.CreatedAt >= startDate)
-        .Join(db.Products, si => si.ProductId, p => p.Id, (si, p) => new { SaleItem = si, Product = p })
-        .GroupBy(x => x.Product.Category)
-        .Select(g => new
-        {
-            category = g.Key,
-            totalRevenue = g.Sum(x => x.SaleItem.UnitPrice * (decimal)x.SaleItem.Quantity),
-            totalProfit = g.Sum(x => (x.SaleItem.UnitPrice - x.SaleItem.CostPrice) * (decimal)x.SaleItem.Quantity),
-            itemsSold = g.Sum(x => x.SaleItem.Quantity),
-            salesCount = g.Count()
+    var sales = await db.Sales
+        .Where(s => s.CreatedAt >= startDate)
+        .Select(s => new {
+            s.CreatedAt,
+            s.Subtotal,
+            Items = s.Items.Select(i => new { i.UnitPrice, i.CostPrice, i.Quantity })
         })
-        .OrderByDescending(x => x.totalRevenue)
         .ToListAsync();
 
-    return Results.Ok(categoryBreakdown);
-});
-
-// Günlük satış trendi (son 30 gün)
-app.MapGet("/api/analytics/sales-trend", async (int? days, KasastokContext db) =>
-{
-    var daysToCheck = days ?? 30;
-    var startDate = DateTime.UtcNow.Date.AddDays(-daysToCheck);
-
-    var salesTrend = await db.Sales
-        .Where(s => s.CreatedAt >= startDate)
-        .Include(s => s.Items)
-        .GroupBy(s => s.CreatedAt.Date)
+    var trend = sales
+        .GroupBy(s => s.CreatedAt.AddHours(timezoneOffsetHours).Date)
         .Select(g => new
         {
             date = g.Key,
             salesCount = g.Count(),
             revenue = g.Sum(s => s.Subtotal),
-            profit = g.SelectMany(s => s.Items).Sum(i => i.Profit)
+            profit = g.SelectMany(s => s.Items).Sum(i => (i.UnitPrice - i.CostPrice) * (decimal)i.Quantity)
         })
         .OrderBy(x => x.date)
+        .ToList();
+
+    return Results.Ok(trend);
+});
+
+// Kategori bazlı satış dağılımı
+app.MapGet("/api/analytics/category-breakdown", async (int days, KasastokContext db) =>
+{
+    var startDate = DateTime.UtcNow.AddDays(-days);
+
+    var saleItems = await db.SaleItems
+        .Where(si => si.Sale!.CreatedAt >= startDate)
+        .Select(si => new {
+            si.SaleId,
+            si.Quantity,
+            si.UnitPrice,
+            si.CostPrice,
+            Category = si.Product != null ? si.Product.Category : "Kategorisiz"
+        })
         .ToListAsync();
 
-    return Results.Ok(salesTrend);
+    var breakdown = saleItems
+        .GroupBy(si => si.Category ?? "Kategorisiz")
+        .Select(g => new
+        {
+            category = g.Key,
+            salesCount = g.Select(si => si.SaleId).Distinct().Count(),
+            itemsSold = g.Sum(si => si.Quantity),
+            totalRevenue = g.Sum(si => si.UnitPrice * (decimal)si.Quantity),
+            totalProfit = g.Sum(si => (si.UnitPrice - si.CostPrice) * (decimal)si.Quantity)
+        })
+        .OrderByDescending(x => x.totalRevenue)
+        .ToList();
+
+    return Results.Ok(breakdown);
 });
 
 // Gelir-Gider trendi
-app.MapGet("/api/analytics/cash-trend", async (int? days, KasastokContext db) =>
+app.MapGet("/api/analytics/cash-trend", async (int days, KasastokContext db) =>
 {
-    var daysToCheck = days ?? 30;
-    var startDate = DateTime.UtcNow.Date.AddDays(-daysToCheck);
+    var startDate = DateTime.UtcNow.AddDays(-days);
+    const int timezoneOffsetHours = 3;
 
-    var cashTrend = await db.CashLedgers
+    var ledgers = await db.CashLedgers
         .Where(c => c.CreatedAt >= startDate)
-        .GroupBy(c => c.CreatedAt.Date)
+        .ToListAsync();
+
+    var trend = ledgers
+        .GroupBy(c => c.CreatedAt.AddHours(timezoneOffsetHours).Date)
         .Select(g => new
         {
             date = g.Key,
             income = g.Where(c => c.Type == TransactionType.Income).Sum(c => c.Amount),
-            expense = g.Where(c => c.Type == TransactionType.Expense).Sum(c => c.Amount),
-            balance = g.Where(c => c.Type == TransactionType.Income).Sum(c => c.Amount) -
-                      g.Where(c => c.Type == TransactionType.Expense).Sum(c => c.Amount)
+            expense = g.Where(c => c.Type == TransactionType.Expense).Sum(c => c.Amount)
         })
         .OrderBy(x => x.date)
-        .ToListAsync();
+        .ToList();
 
-    return Results.Ok(cashTrend);
+    return Results.Ok(trend);
 });
 
-// Stok durumu özeti
-app.MapGet("/api/analytics/stock-status", async (KasastokContext db) =>
+// Düşük stoklu ürünler
+app.MapGet("/api/analytics/low-stock", async (int threshold, KasastokContext db) =>
 {
-    var localNow = DateTime.UtcNow.AddHours(timezoneOffsetHours);
-    var today = new DateTime(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, DateTimeKind.Utc).AddHours(-timezoneOffsetHours);
+    var lowStockProducts = await db.Products
+        .Where(p => p.Stock <= threshold)
+        .OrderBy(p => p.Stock)
+        .Select(p => new
+        {
+            id = p.Id,
+            name = p.Name,
+            category = p.Category,
+            stock = p.Stock,
+            unit = p.Unit,
+            costPrice = p.CostPrice,
+            salePrice = p.SalePrice
+        })
+        .ToListAsync();
 
-    var stockStatus = new
-    {
-        lowStock = await db.Products.Where(p => p.Stock < 5).ToListAsync(),
-        outOfStock = await db.Products.Where(p => p.Stock == 0).ToListAsync(),
-        expiringSoon = await db.Products
-            .Where(p => p.HasExpiration && p.ExpirationDate.HasValue &&
-                   p.ExpirationDate.Value <= today.AddDays(30) &&
-                   p.ExpirationDate.Value >= today)
-            .OrderBy(p => p.ExpirationDate)
-            .ToListAsync(),
-        expired = await db.Products
-            .Where(p => p.HasExpiration && p.ExpirationDate.HasValue &&
-                   p.ExpirationDate.Value < today)
-            .ToListAsync()
-    };
+    return Results.Ok(lowStockProducts);
+});
 
-    return Results.Ok(stockStatus);
+// SKT'si yaklaşan ürünler
+app.MapGet("/api/analytics/expiring-products", async (int days, KasastokContext db) =>
+{
+    var expiryDate = DateTime.UtcNow.AddDays(days);
+
+    var expiringProducts = await db.Products
+        .Where(p => p.HasExpiration && p.ExpirationDate <= expiryDate)
+        .OrderBy(p => p.ExpirationDate)
+        .Select(p => new
+        {
+            id = p.Id,
+            name = p.Name,
+            category = p.Category,
+            stock = p.Stock,
+            expirationDate = p.ExpirationDate,
+            daysUntilExpiry = (p.ExpirationDate!.Value - DateTime.UtcNow).Days
+        })
+        .ToListAsync();
+
+    return Results.Ok(expiringProducts);
 });
 
 app.Run();

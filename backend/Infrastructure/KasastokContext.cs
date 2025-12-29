@@ -12,6 +12,7 @@ public class KasastokContext : DbContext
     public DbSet<Sale> Sales => Set<Sale>();
     public DbSet<SaleItem> SaleItems => Set<SaleItem>();
     public DbSet<CashLedger> CashLedgers => Set<CashLedger>();
+    public DbSet<User> Users => Set<User>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,5 +38,14 @@ public class KasastokContext : DbContext
             .WithMany()
             .HasForeignKey(sm => sm.ProductId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // User konfigürasyonu
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.HasIndex(u => u.Username).IsUnique();
+            entity.Property(u => u.Username).HasMaxLength(50).IsRequired();
+            entity.Property(u => u.PasswordHash).IsRequired();
+            entity.Property(u => u.FullName).HasMaxLength(100).IsRequired();
+        });
     }
 }
