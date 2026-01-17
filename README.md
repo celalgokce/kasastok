@@ -38,4 +38,4 @@ Kasastok is a modular inventory, point-of-sale, and financial ledger management 
 - Category-based sales distribution
 
 ## Project Structure
-
+Video Link : https://drive.google.com/file/d/1yPCDTEa1Y7NMXwi408jYzXhxAO63iM2l/view?usp=sharing
